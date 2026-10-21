@@ -37,3 +37,21 @@ in weewx.conf then restart weewx:
             periods = day, week, month, year
 
 Not every metric is available on every machine.
+
+Independent continuation, 0.21.0, 2026-10-22
+
+This repository continues https://github.com/matthewwall/weewx-cmon from
+396546b9b569bcd60a6995feecc4cdd62cac2026, with its full history and license.
+It is maintained separately. Install with WeeWX 5:
+
+weectl extension install https://github.com/weewx-packages/weewx-cmon/archive/refs/tags/v0.21.0.zip
+
+Inaccessible or vanished mounts are skipped individually. Mount-path octal
+escapes are decoded. An existing empty hwmon directory no longer suppresses
+thermal_zone0. A malformed hwmon reading does not hide the other sensors.
+Temperature fields remain cpu_temp and cpu_tempN, in degrees Celsius.
+
+The Python-2 long traceback in upstream issue #3 is not reproduced on Python 3.
+The tests feed large integer counters through the real WeeWX accumulator.
+Python 2 is no longer supported by this continuation. Physical Raspberry Pi
+sensor access still depends on the host kernel and permissions.

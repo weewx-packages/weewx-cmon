@@ -1,4 +1,5 @@
 # Copyright 2013-2020 Matthew Wall, Tom Keffer
+# Modified 2026-10-22: tolerate inaccessible mounts and independent sensor failures.
 """weewx module that records cpu, memory, disk, and network usage.
 
 This file contains both a weewx driver and a weewx service.
@@ -116,6 +117,7 @@ then load it using this configuration:
 from __future__ import with_statement
 from __future__ import absolute_import
 from __future__ import print_function
+import glob
 import os
 import platform
 import re
@@ -160,7 +162,7 @@ except ImportError:
         logmsg(syslog.LOG_ERR, msg)
 
 DRIVER_NAME = "ComputerMonitor"
-DRIVER_VERSION = "0.20"
+DRIVER_VERSION = "0.21.0"
 
 if weewx.__version__ < "3":
     raise weewx.UnsupportedFeature("weewx 3 is required, found %s" %
@@ -385,12 +387,15 @@ class Collector(object):
 
 # this should work on any linux running kernel 2.2 or later
 class LinuxCollector(Collector):
+    PROC_ROOT = '/proc'
+    SYS_ROOT = '/sys'
+
     def __init__(self, hardware, ignored_mounts):
         super(LinuxCollector, self).__init__(hardware)
 
         # provide info about the system on which we are running
         loginf('sysinfo: %s' % ' '.join(os.uname()))
-        fn = '/proc/cpuinfo'
+        fn = os.path.join(self.PROC_ROOT, 'cpuinfo')
         try:
             cpuinfo = self._readproc_dict(fn)
             for key in cpuinfo:
@@ -436,7 +441,7 @@ class LinuxCollector(Collector):
         record = super(LinuxCollector, self).get_data(now)
 
         # read memory status
-        fn = '/proc/meminfo'
+        fn = os.path.join(self.PROC_ROOT, 'meminfo')
         try:
             meminfo = self._readproc_dict(fn)
             if meminfo:
@@ -450,7 +455,7 @@ class LinuxCollector(Collector):
             logdbg("read failed for %s: %s" % (fn, e))
 
         # get cpu usage
-        fn = '/proc/stat'
+        fn = os.path.join(self.PROC_ROOT, 'stat')
         try:
             cpuinfo = self._readproc_lines(fn)
             if cpuinfo:
@@ -463,7 +468,7 @@ class LinuxCollector(Collector):
             logdbg("read failed for %s: %s" % (fn, e))
 
         # get network usage
-        fn = '/proc/net/dev'
+        fn = os.path.join(self.PROC_ROOT, 'net/dev')
         try:
             netinfo = self._readproc_dict(fn)
             if netinfo:
@@ -488,7 +493,7 @@ class LinuxCollector(Collector):
 #        (uptime,idletime) = uptimestr.split()
 
         # get load and process information
-        fn = '/proc/loadavg'
+        fn = os.path.join(self.PROC_ROOT, 'loadavg')
         try:
             loadstr = self._readproc_line(fn)
             if loadstr:
@@ -502,37 +507,39 @@ class LinuxCollector(Collector):
         except Exception as e:
             logdbg("read failed for %s: %s" % (fn, e))
 
-        # read cpu temperature
-        tdir = '/sys/class/hwmon/hwmon0/device'
-        # rpi keeps cpu temperature in a different location
-        tfile = '/sys/class/thermal/thermal_zone0/temp'
-        if os.path.exists(tdir):
-            try:
-                for f in os.listdir(tdir):
-                    if f.endswith('_input'):
-                        s = self._readproc_line(os.path.join(tdir, f))
-                        if s and len(s):
-                            n = f.replace('_input', '')
-                            t_C = int(s) / 1000 # degree C
-                            record['cpu_' + n] = t_C
-            except Exception as e:
-                logdbg("read failed for %s: %s" % (tdir, e))
-        elif os.path.exists(tfile):
-            try:
-                s = self._readproc_line(tfile)
-                t_C = int(s) / 1000 # degree C
-                record['cpu_temp'] = t_C
-            except Exception as e:
-                logdbg("read failed for %s: %s" % (tfile, e))
+        # Both trees may exist on Raspberry Pi, while hwmon has no readings.
+        hwmon_root = os.path.join(self.SYS_ROOT, 'class/hwmon')
+        for tdir in sorted(glob.glob(os.path.join(hwmon_root, 'hwmon*'))):
+            for sensor_dir in [tdir, os.path.join(tdir, 'device')]:
+                try:
+                    names = sorted(os.listdir(sensor_dir))
+                except OSError:
+                    continue
+                for name in names:
+                    if not re.match(r'^temp[0-9]+_input$', name):
+                        continue
+                    path = os.path.join(sensor_dir, name)
+                    try:
+                        value = float(self._readproc_line(path)) / 1000.0
+                        record.setdefault('cpu_' + name.replace('_input', ''), value)
+                    except (OSError, ValueError) as e:
+                        logdbg("read failed for %s: %s" % (path, e))
+        tfile = os.path.join(self.SYS_ROOT, 'class/thermal/thermal_zone0/temp')
+        try:
+            record['cpu_temp'] = float(self._readproc_line(tfile)) / 1000.0
+        except (OSError, ValueError) as e:
+            logdbg("read failed for %s: %s" % (tfile, e))
 
         # get stats on mounted filesystems
-        fn = '/proc/mounts'
+        fn = os.path.join(self.PROC_ROOT, 'mounts')
         disks = []
         try:
             mntlines = self._readproc_lines(fn)
             if mntlines:
                 for mnt in mntlines:
-                    mntpt = mntlines[mnt].split()[0]
+                    mntpt = re.sub(r'\\([0-7]{3})',
+                                   lambda match: chr(int(match.group(1), 8)),
+                                   mntlines[mnt].split()[0])
                     ignore = False
                     if mnt.find(':') >= 0:
                         ignore = True
@@ -548,7 +555,11 @@ class LinuxCollector(Collector):
             label = disk.replace('/', '_')
             if label == '_':
                 label = '_root'
-            st = os.statvfs(disk)
+            try:
+                st = os.statvfs(disk)
+            except OSError as e:
+                logdbg("statvfs failed for %s: %s" % (disk, e))
+                continue
             free = int((st.f_bavail * st.f_frsize) / 1024) # kB
             total = int((st.f_blocks * st.f_frsize) / 1024) # kB
             used = int(((st.f_blocks - st.f_bfree) * st.f_frsize) / 1024) # kB

@@ -1,5 +1,6 @@
 # installer for cmon
 # Copyright 2014 Matthew Wall
+# Modified 2026-10-22: release the independent continuation.
 # Distributed under the terms of the GNU Public License (GPLv3)
 
 from weecfg.extension import ExtensionInstaller
@@ -10,7 +11,7 @@ def loader():
 class ComputerMonitorInstaller(ExtensionInstaller):
     def __init__(self):
         super(ComputerMonitorInstaller, self).__init__(
-            version="0.20",
+            version="0.21.0",
             name='cmon',
             description='Collect and display computer health indicators.',
             author="Matthew Wall",

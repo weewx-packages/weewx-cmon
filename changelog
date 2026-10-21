@@ -1,3 +1,6 @@
+0.21.0 2026-10-22
+  Skip inaccessible mounts; read thermal_zone0 independently of hwmon.
+
 0.20 16dec2019
 * ported to python 3
 
