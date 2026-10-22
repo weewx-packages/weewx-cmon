@@ -85,3 +85,33 @@ def test_hwmon_without_device_subdirectory(collector):
     hwmon.mkdir(parents=True)
     (hwmon / 'temp1_input').write_text('31000\n')
     assert sensor.get_data(100)['cpu_temp1'] == 31.0
+
+
+def test_service_keeps_existing_database_values(collector, tmp_path, monkeypatch):
+    import configobj
+    from types import SimpleNamespace
+    import weewx
+    import weewx.manager
+
+    sensor, proc, sys = collector
+    monkeypatch.setattr(cmon, 'get_collector', lambda *args: sensor)
+    config = configobj.ConfigObj({
+        'ComputerMonitor': {'max_age': None},
+        'DataBindings': {'cmon_binding': {'database': 'cmon', 'table_name': 'archive',
+            'manager': 'weewx.manager.DaySummaryManager', 'schema': dict(cmon.schema)}},
+        'Databases': {'cmon': {'driver': 'weedb.sqlite',
+            'database_name': str(tmp_path / 'historical.sdb')}}})
+    binder = weewx.manager.DBBinder(config)
+    try:
+        manager = binder.get_manager('cmon_binding', initialize=True)
+        manager.addRecord({'dateTime': 1000000000, 'usUnits': weewx.METRIC, 'interval': 5,
+            'cpu_temp': 42.5, 'cpu_temp1': 30.25, 'mem_total': 10000000000})
+        before = manager.getRecord(1000000000)
+        service = cmon.ComputerMonitor(SimpleNamespace(db_binder=binder,
+            bind=lambda *args: None), config)
+        service.save_data(service.get_data(1000000300, 1000000000))
+        assert manager.getRecord(1000000000) == before
+        assert manager.getRecord(1000000300)['usUnits'] == weewx.METRIC
+        assert manager.getRecord(1000000300)['mem_total'] == 10000000000
+    finally:
+        binder.close()
