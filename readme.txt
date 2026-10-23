@@ -13,24 +13,36 @@ thermal, network and UPS readings depend on the host and permissions.
 
 Installation
 
+For a pip installation, activate the existing virtual environment that runs
+your WeeWX service before running these commands. Both `python` and `weectl`
+must come from that environment. For a distribution package installation, use
+its `weectl`, with `sudo` if required. Add `--config /path/to/weewx.conf` to the
+extension command when your station configuration is not found automatically.
+
+A psutil source build requires a C compiler and Python development headers.
+
+The Linux collector needs no extra Python package. On macOS, install psutil
+in the existing WeeWX virtual environment before installing the extension:
+
+```sh
+python -m pip install 'psutil'
+```
+
+
 Install the published archive with WeeWX 5's extension installer:
 
 ```sh
 weectl extension install https://github.com/weewx-packages/weewx-cmon/releases/download/v0.21.0/weewx-cmon-0.21.0.zip
 ```
 
-Use the `weectl` from your WeeWX environment. Add
-`--config /path/to/weewx.conf` when the station configuration is not found
-automatically. Package installations may require `sudo`; activate the WeeWX
-virtual environment for pip installations. Restart your WeeWX service after
-configuration, for example `sudo systemctl restart weewx` on systemd.
-The installer does not restart it for you.
+Restart your WeeWX service after configuration, for example
+`sudo systemctl restart weewx` on systemd. The installer does not restart it
+for you.
 
 The installer registers user.cmon.ComputerMonitor in process_services,
 installs bin/user/cmon.py, and adds cmon_binding and the cmon.sdb database.
-It also creates a report named cmon using skins/cmon. No extra Python
-package is required for the base collector. Optional UPS collection requires
-the corresponding host utilities and a configured UPS.
+It also creates a report named cmon using skins/cmon. Optional UPS collection
+requires the corresponding host utilities and a configured UPS.
 
 Minimal configuration, after installation:
 
