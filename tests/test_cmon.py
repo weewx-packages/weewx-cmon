@@ -185,3 +185,17 @@ def test_skin_has_no_hard_coded_version():
     skin = Path(__file__).parents[1] / 'skins/cmon'
     assert 'version' not in configobj.ConfigObj(str(skin / 'skin.conf'))['Extras']
     assert '$Extras.version' not in (skin / 'index.html.tmpl').read_text()
+
+
+def test_rpi_memory_comes_from_get_mem(tmp_path, monkeypatch):
+    vcgencmd = tmp_path / 'vcgencmd'
+    vcgencmd.write_text('#!/bin/sh\n'
+                        'case "$1 $2" in\n'
+                        '  "measure_temp ") echo "temp=42.8\'C" ;;\n'
+                        '  "get_mem arm") echo "arm=948M" ;;\n'
+                        '  "get_mem gpu") echo "gpu=76M" ;;\n'
+                        'esac\n')
+    vcgencmd.chmod(0o755)
+    monkeypatch.setattr(cmon.Collector, '_RPI_VCGENCMD', str(vcgencmd))
+    record = cmon.Collector._get_rpi_info()
+    assert record['arm_mem'] == 948 and record['gpu_mem'] == 76

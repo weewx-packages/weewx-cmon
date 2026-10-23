@@ -1,7 +1,8 @@
 # Copyright 2013-2020 Matthew Wall, Tom Keffer
 # Modified 2026-10-22: tolerate inaccessible mounts and independent sensor failures.
 # Modified 2026-10-23: read command output as text, record every mount point,
-#   report memory in kB on macOS, fix single ignored_mounts and __main__ logging.
+#   report memory in kB on macOS, fix single ignored_mounts and __main__ logging,
+#   query arm and gpu memory with get_mem, use raw strings for regular expressions.
 """weewx module that records cpu, memory, disk, and network usage.
 
 This file contains both a weewx driver and a weewx service.
@@ -319,7 +320,7 @@ class Collector(object):
             record.update(self._get_apcups_info())
         return record
 
-    _DIGITS = re.compile('[\d.]+')
+    _DIGITS = re.compile(r'[\d.]+')
 
     @staticmethod
     def _get_apcups_info():
@@ -354,8 +355,8 @@ class Collector(object):
         return record
 
     _RPI_VCGENCMD = '/opt/vc/bin/vcgencmd'
-    _RPI_VOLT = re.compile('([^:]+):\s+volt=([\d.]+)')
-    _RPI_MEM = re.compile('([^=]+)=([\d]+)')
+    _RPI_VOLT = re.compile(r'([^:]+):\s+volt=([\d.]+)')
+    _RPI_MEM = re.compile(r'([^=]+)=([\d]+)')
 
     @staticmethod
     def _get_rpi_info():
@@ -373,13 +374,16 @@ class Collector(object):
                 m = Collector._RPI_VOLT.search(line)
                 if m:
                     record[m.group(1) + '_volt'] = float(m.group(2))
-            cmd = '%s measure_volts' % Collector._RPI_VCGENCMD
-            p = Popen(cmd, shell=True, stdout=PIPE, universal_newlines=True)
-            o = p.communicate()[0]
-            for line in o.split('\n'):
-                m = Collector._RPI_MEM.search(line)
-                if m:
-                    record[m.group(1) + '_mem'] = float(m.group(2))
+            # 'vcgencmd get_mem arm' prints 'arm=948M', which fills the
+            # arm_mem and gpu_mem columns listed in the schema.
+            for target in ('arm', 'gpu'):
+                cmd = '%s get_mem %s' % (Collector._RPI_VCGENCMD, target)
+                p = Popen(cmd, shell=True, stdout=PIPE, universal_newlines=True)
+                o = p.communicate()[0]
+                for line in o.split('\n'):
+                    m = Collector._RPI_MEM.search(line)
+                    if m:
+                        record[m.group(1) + '_mem'] = float(m.group(2))
         except (ValueError, IOError, KeyError) as e:
             logerr('rpi_info failed: %s' % e)
         return record
