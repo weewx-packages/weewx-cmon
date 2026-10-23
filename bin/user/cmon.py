@@ -168,7 +168,7 @@ except ImportError:
         logmsg(syslog.LOG_ERR, msg)
 
 DRIVER_NAME = "ComputerMonitor"
-DRIVER_VERSION = "0.21.0"
+DRIVER_VERSION = "0.21.1"
 
 if weewx.__version__ < "3":
     raise weewx.UnsupportedFeature("weewx 3 is required, found %s" %
