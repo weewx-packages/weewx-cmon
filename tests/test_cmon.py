@@ -199,3 +199,46 @@ def test_rpi_memory_comes_from_get_mem(tmp_path, monkeypatch):
     monkeypatch.setattr(cmon.Collector, '_RPI_VCGENCMD', str(vcgencmd))
     record = cmon.Collector._get_rpi_info()
     assert record['arm_mem'] == 948 and record['gpu_mem'] == 76
+
+
+def test_apcups_battery_and_output_voltage_do_not_overwrite(monkeypatch):
+    import subprocess
+    # Order as in the Smart-UPS example of the apcupsd manual.
+    output = 'printf "OUTPUTV  : 232.7 Volts\\nBATTV    : 27.7 Volts\\n"'
+    monkeypatch.setattr(cmon, 'Popen', lambda cmd, **kw: subprocess.Popen(output, **kw))
+    assert cmon.Collector._get_apcups_info() == {'ups_voltage': 27.7, 'ups_output_voltage': 232.7}
+
+
+def test_missing_apcaccess_is_logged(monkeypatch, caplog):
+    import subprocess
+    monkeypatch.setattr(cmon, 'Popen',
+                        lambda cmd, **kw: subprocess.Popen('/nonexistent/apcaccess', stderr=subprocess.DEVNULL, **kw))
+    assert cmon.Collector._get_apcups_info() == {}
+    assert 'apcups_info failed: /sbin/apcaccess exited with status 127' in caplog.text
+
+
+def test_rpi_voltages_fill_schema_columns(tmp_path, monkeypatch):
+    vcgencmd = tmp_path / 'vcgencmd'
+    vcgencmd.write_text('#!/bin/sh\n'
+                        'case "$1 $2" in\n'
+                        '  "measure_temp ") echo "temp=42.8\'C" ;;\n'
+                        '  "measure_volts core") echo "volt=1.2000V" ;;\n'
+                        '  "measure_volts sdram_c") echo "volt=1.2500V" ;;\n'
+                        '  "measure_volts sdram_i") echo "volt=1.2600V" ;;\n'
+                        '  "measure_volts sdram_p") echo "volt=1.2700V" ;;\n'
+                        'esac\n')
+    vcgencmd.chmod(0o755)
+    monkeypatch.setattr(cmon.Collector, '_RPI_VCGENCMD', str(vcgencmd))
+    record = cmon.Collector._get_rpi_info()
+    assert (record['core_volt'], record['core_sdram_c'], record['core_sdram_i'],
+            record['core_sdram_p']) == (1.2, 1.25, 1.26, 1.27)
+
+
+def test_vcgencmd_is_found_on_path(tmp_path, monkeypatch):
+    vcgencmd = tmp_path / 'vcgencmd'
+    vcgencmd.write_text('#!/bin/sh\n')
+    vcgencmd.chmod(0o755)
+    monkeypatch.setenv('PATH', str(tmp_path))
+    module = importlib.util.module_from_spec(SPEC)
+    SPEC.loader.exec_module(module)
+    assert module.Collector._RPI_VCGENCMD == str(vcgencmd)

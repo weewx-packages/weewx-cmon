@@ -9,6 +9,12 @@ Unreleased
   Remove the hard-coded version from the skin.
   Query arm and gpu memory with vcgencmd get_mem instead of measure_volts.
   Use raw strings for regular expressions, avoiding SyntaxWarning on Python 3.12+.
+  Store BATTV in ups_voltage; OUTPUTV no longer overwrites it and is read as
+  ups_output_voltage.
+  Log an error when apcaccess is missing or fails.
+  Query vcgencmd measure_volts per block, filling core_volt, core_sdram_c,
+  core_sdram_i and core_sdram_p.
+  Find vcgencmd on PATH, in /usr/bin or in /opt/vc/bin.
 
 0.21.0 2026-10-22
   Skip inaccessible mounts; read thermal_zone0 independently of hwmon.
