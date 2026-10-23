@@ -1,3 +1,15 @@
+Unreleased
+  Read apcaccess and vcgencmd output as text on Python 3.
+  Accept a single path for ignored_mounts.
+  Record every mount point of a device mounted more than once.
+  Report memory and swap in kB on macOS, as on Linux.
+  Report unsupported systems instead of failing with NameError.
+  Document ups_time in minutes, as apcaccess reports TIMELEFT.
+  Fix logging setup when cmon.py is run directly.
+  Remove the hard-coded version from the skin.
+  Query arm and gpu memory with vcgencmd get_mem instead of measure_volts.
+  Use raw strings for regular expressions, avoiding SyntaxWarning on Python 3.12+.
+
 0.21.0 2026-10-22
   Skip inaccessible mounts; read thermal_zone0 independently of hwmon.
 
