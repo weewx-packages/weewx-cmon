@@ -3,6 +3,8 @@
 # Modified 2026-10-23: read command output as text, record every mount point,
 #   report memory in kB on macOS, fix single ignored_mounts and __main__ logging,
 #   query arm and gpu memory with get_mem, use raw strings for regular expressions.
+# Modified 2026-10-23: store only BATTV in ups_voltage, log a failed apcaccess,
+#   query rpi voltages per block, find vcgencmd in /usr/bin or /opt/vc/bin.
 """weewx module that records cpu, memory, disk, and network usage.
 
 This file contains both a weewx driver and a weewx service.
@@ -124,6 +126,7 @@ import glob
 import os
 import platform
 import re
+import shutil
 import time
 from subprocess import Popen, PIPE
 from builtins import input
@@ -329,6 +332,13 @@ class Collector(object):
             cmd = '/sbin/apcaccess'
             p = Popen(cmd, shell=True, stdout=PIPE, universal_newlines=True)
             o = p.communicate()[0]
+            if p.returncode != 0:
+                # The shell reports a missing program only on stderr, and
+                # apcaccess exits non-zero when apcupsd is not reachable.
+                # Without this the record would just lack the ups fields.
+                logerr('apcups_info failed: %s exited with status %s'
+                       % (cmd, p.returncode))
+                return record
             for line in o.split('\n'):
                 if line.startswith('ITEMP'):
                     m = Collector._DIGITS.search(line)
@@ -342,10 +352,19 @@ class Collector(object):
                     m = Collector._DIGITS.search(line)
                     if m:
                         record['ups_charge'] = float(m.group())
-                elif line.startswith('OUTPUTV') or line.startswith('BATTV'):
+                # ups_voltage is the battery voltage. apcaccess lists BATTV
+                # after OUTPUTV, so BATTV is what ups_voltage held when both
+                # wrote to it, and Back-UPS models report no OUTPUTV at all.
+                # The output voltage gets its own name, which the default
+                # schema does not store.
+                elif line.startswith('BATTV'):
                     m = Collector._DIGITS.search(line)
                     if m:
                         record['ups_voltage'] = float(m.group())
+                elif line.startswith('OUTPUTV'):
+                    m = Collector._DIGITS.search(line)
+                    if m:
+                        record['ups_output_voltage'] = float(m.group())
                 elif line.startswith('TIMELEFT'):
                     m = Collector._DIGITS.search(line)
                     if m:
@@ -354,8 +373,19 @@ class Collector(object):
             logerr('apcups_info failed: %s' % e)
         return record
 
-    _RPI_VCGENCMD = '/opt/vc/bin/vcgencmd'
-    _RPI_VOLT = re.compile(r'([^:]+):\s+volt=([\d.]+)')
+    # Current Raspberry Pi OS installs vcgencmd in /usr/bin, older releases
+    # only in /opt/vc/bin. Search PATH first, then both directories, in case
+    # WeeWX runs with a reduced PATH.
+    _RPI_VCGENCMD = (shutil.which('vcgencmd')
+                     or shutil.which('vcgencmd', path='/usr/bin:/opt/vc/bin')
+                     or '/opt/vc/bin/vcgencmd')
+    # 'vcgencmd measure_volts <block>' reports a single block, as in
+    # 'volt=1.2000V'. Each block is stored in the column the schema names.
+    _RPI_VOLT = re.compile(r'volt=([\d.]+)')
+    _RPI_VOLT_BLOCKS = [('core', 'core_volt'),
+                        ('sdram_c', 'core_sdram_c'),
+                        ('sdram_i', 'core_sdram_i'),
+                        ('sdram_p', 'core_sdram_p')]
     _RPI_MEM = re.compile(r'([^=]+)=([\d]+)')
 
     @staticmethod
@@ -367,13 +397,13 @@ class Collector(object):
             p = Popen(cmd, shell=True, stdout=PIPE, universal_newlines=True)
             o = p.communicate()[0]
             record['core_temp'] = float(o.replace("'C\n", '').partition('=')[2])
-            cmd = '%s measure_volts' % Collector._RPI_VCGENCMD
-            p = Popen(cmd, shell=True, stdout=PIPE, universal_newlines=True)
-            o = p.communicate()[0]
-            for line in o.split('\n'):
-                m = Collector._RPI_VOLT.search(line)
+            for block, name in Collector._RPI_VOLT_BLOCKS:
+                cmd = '%s measure_volts %s' % (Collector._RPI_VCGENCMD, block)
+                p = Popen(cmd, shell=True, stdout=PIPE, universal_newlines=True)
+                o = p.communicate()[0]
+                m = Collector._RPI_VOLT.search(o)
                 if m:
-                    record[m.group(1) + '_volt'] = float(m.group(2))
+                    record[name] = float(m.group(1))
             # 'vcgencmd get_mem arm' prints 'arm=948M', which fills the
             # arm_mem and gpu_mem columns listed in the schema.
             for target in ('arm', 'gpu'):

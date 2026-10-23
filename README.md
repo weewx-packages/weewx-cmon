@@ -70,7 +70,7 @@ Options in `[ComputerMonitor]`:
 | `data_binding` | `cmon_binding` | Binding of the database cmon writes to. |
 | `max_age` | `2592000` | Records older than this many seconds are deleted. `None` keeps all records. |
 | `ignored_mounts` | `/lib/init/rw, /proc, /sys, /dev, /afs, /mit, /run, /var/lib/nfs` | Mount points starting with one of these paths are skipped. Setting the option replaces the whole list. Network mounts with `:` in the device name are always skipped. |
-| `hardware` | none | `apcups` reads a UPS through `/sbin/apcaccess`, `rpi` reads `/opt/vc/bin/vcgencmd`. If the command is missing or fails, its readings are left out. |
+| `hardware` | none | `apcups` reads a UPS through `/sbin/apcaccess`, `rpi` reads `vcgencmd` from `PATH`, `/usr/bin` or `/opt/vc/bin`. If the command is missing or fails, its readings are left out and cmon logs an error. |
 
 ### Stored values
 
@@ -88,6 +88,12 @@ columns in the schema are saved.
 | `net_eth0_*`, `net_wlan0_*` with `rbytes`, `rpackets`, `rerrs`, `rdrop`, `tbytes`, `tpackets`, `terrs`, `tdrop` | difference since the previous sample |
 | `disk_root_*`, `disk_home_*` with `total`, `free`, `used` | kB |
 | `ups_temp`, `ups_load`, `ups_charge`, `ups_voltage`, `ups_time` | °C, percent, percent, volt, minutes, as `apcaccess` prints them |
+
+`ups_voltage` is the battery voltage, `BATTV` in `apcaccess`. The output
+voltage `OUTPUTV` is read as `ups_output_voltage`, which the default schema
+does not store. With `hardware = rpi` the collector reads `core_temp` (°C),
+`core_volt`, `core_sdram_c`, `core_sdram_i`, `core_sdram_p` (volt), `arm_mem`
+and `gpu_mem` (MB). The default schema lists these columns commented out.
 
 `cpu_temp` comes from `/sys/class/thermal/thermal_zone0/temp`. `cpu_tempN`
 comes from the `tempN_input` files under `/sys/class/hwmon/hwmon*`. Disk
