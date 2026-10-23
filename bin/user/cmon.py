@@ -1,5 +1,7 @@
 # Copyright 2013-2020 Matthew Wall, Tom Keffer
 # Modified 2026-10-22: tolerate inaccessible mounts and independent sensor failures.
+# Modified 2026-10-23: read command output as text, record every mount point,
+#   report memory in kB on macOS, fix single ignored_mounts and __main__ logging.
 """weewx module that records cpu, memory, disk, and network usage.
 
 This file contains both a weewx driver and a weewx service.
@@ -260,7 +262,7 @@ schema = [
     ('ups_load', 'REAL'),    # percent
     ('ups_charge', 'REAL'),  # percent
     ('ups_voltage', 'REAL'), # volt
-    ('ups_time', 'REAL'),    # seconds
+    ('ups_time', 'REAL'),    # minutes
     ]
 
 # this exension will scan for all mounted file system.  these are the
@@ -283,8 +285,6 @@ def get_collector(hardware=[], ignored_mounts=IGNORED_MOUNTS):
         return LinuxCollector(hardware, ignored_mounts)
     elif s == 'Darwin':
         return MacOSXCollector(hardware, ignored_mounts)
-    elif s == 'BSD':
-        return BSDCollector(hardware, ignored_mounts)
     raise Exception('unsupported system %s' % s)
 
 
@@ -326,7 +326,7 @@ class Collector(object):
         record = dict()
         try:
             cmd = '/sbin/apcaccess'
-            p = Popen(cmd, shell=True, stdout=PIPE)
+            p = Popen(cmd, shell=True, stdout=PIPE, universal_newlines=True)
             o = p.communicate()[0]
             for line in o.split('\n'):
                 if line.startswith('ITEMP'):
@@ -363,18 +363,18 @@ class Collector(object):
         record = dict()
         try:
             cmd = '%s measure_temp' % Collector._RPI_VCGENCMD
-            p = Popen(cmd, shell=True, stdout=PIPE)
+            p = Popen(cmd, shell=True, stdout=PIPE, universal_newlines=True)
             o = p.communicate()[0]
             record['core_temp'] = float(o.replace("'C\n", '').partition('=')[2])
             cmd = '%s measure_volts' % Collector._RPI_VCGENCMD
-            p = Popen(cmd, shell=True, stdout=PIPE)
+            p = Popen(cmd, shell=True, stdout=PIPE, universal_newlines=True)
             o = p.communicate()[0]
             for line in o.split('\n'):
                 m = Collector._RPI_VOLT.search(line)
                 if m:
                     record[m.group(1) + '_volt'] = float(m.group(2))
             cmd = '%s measure_volts' % Collector._RPI_VCGENCMD
-            p = Popen(cmd, shell=True, stdout=PIPE)
+            p = Popen(cmd, shell=True, stdout=PIPE, universal_newlines=True)
             o = p.communicate()[0]
             for line in o.split('\n'):
                 m = Collector._RPI_MEM.search(line)
@@ -534,20 +534,25 @@ class LinuxCollector(Collector):
         fn = os.path.join(self.PROC_ROOT, 'mounts')
         disks = []
         try:
-            mntlines = self._readproc_lines(fn)
-            if mntlines:
-                for mnt in mntlines:
+            # Read every line rather than a dict keyed by device: one device
+            # can be mounted at several places (bind mounts), and each mount
+            # point needs its own disk_* fields.
+            with open(fn) as fp:
+                for line in fp:
+                    fields = line.split()
+                    if len(fields) < 2:
+                        continue
                     mntpt = re.sub(r'\\([0-7]{3})',
                                    lambda match: chr(int(match.group(1), 8)),
-                                   mntlines[mnt].split()[0])
+                                   fields[1])
                     ignore = False
-                    if mnt.find(':') >= 0:
+                    if fields[0].find(':') >= 0:
                         ignore = True
                     for m in self.ignored_mounts:
                         if mntpt.startswith(m):
                             ignore = True
                             break
-                    if not ignore:
+                    if not ignore and mntpt not in disks:
                         disks.append(mntpt)
         except Exception as e:
             logdbg("read failed for %s: %s" % (fn, e))
@@ -585,19 +590,19 @@ class MacOSXCollector(Collector):
 
         record = super(MacOSXCollector, self).get_data(now)
 
-        # read memory status
+        # read memory status. psutil reports bytes; store kB as on Linux.
         info = psutil.virtual_memory()
-        record['mem_total'] = info.total
-        record['mem_free'] = info.free
-        record['mem_used'] = info.used
-        record['mem_available'] = info.available
-        record['mem_active'] = info.active
-        record['mem_inactive'] = info.inactive
-        record['mem_wired'] = info.wired
+        record['mem_total'] = info.total // 1024 # kB
+        record['mem_free'] = info.free // 1024 # kB
+        record['mem_used'] = info.used // 1024 # kB
+        record['mem_available'] = info.available // 1024 # kB
+        record['mem_active'] = info.active // 1024 # kB
+        record['mem_inactive'] = info.inactive // 1024 # kB
+        record['mem_wired'] = info.wired // 1024 # kB
         info = psutil.swap_memory()
-        record['swap_total'] = info.total
-        record['swap_free'] = info.free
-        record['swap_used'] = info.used
+        record['swap_total'] = info.total // 1024 # kB
+        record['swap_free'] = info.free // 1024 # kB
+        record['swap_used'] = info.used // 1024 # kB
         record['swap_sin'] = info.sin
         record['swap_sout'] = info.sout
 
@@ -668,7 +673,8 @@ class ComputerMonitorDriver(AbstractDevice):
         self.polling_interval = int(stn_dict.get('polling_interval', 10))
         loginf('polling interval is %s' % self.polling_interval)
 
-        self.ignored_mounts = stn_dict.get('ignored_mounts', IGNORED_MOUNTS)
+        self.ignored_mounts = weeutil.weeutil.option_as_list(
+            stn_dict.get('ignored_mounts', IGNORED_MOUNTS))
         self.hardware = stn_dict.get('hardware', [None])
         if not isinstance(self.hardware, list):
             self.hardware = [self.hardware]
@@ -695,7 +701,8 @@ class ComputerMonitor(StdService):
 
         d = config_dict.get('ComputerMonitor', {})
         self.max_age = weeutil.weeutil.to_int(d.get('max_age', 2592000))
-        self.ignored_mounts = d.get('ignored_mounts', IGNORED_MOUNTS)
+        self.ignored_mounts = weeutil.weeutil.option_as_list(
+            d.get('ignored_mounts', IGNORED_MOUNTS))
         self.hardware = d.get('hardware', [None])
         if not isinstance(self.hardware, list):
             self.hardware = [self.hardware]
@@ -769,7 +776,12 @@ if __name__ == "__main__":
     def main():
         import optparse
         import weecfg
-        syslog.openlog('wee_cmon', syslog.LOG_PID | syslog.LOG_CONS)
+        try:
+            # WeeWX V4 logging
+            weeutil.logger.setup('wee_cmon', {})
+        except NameError:
+            # WeeWX V3 logging
+            syslog.openlog('wee_cmon', syslog.LOG_PID | syslog.LOG_CONS)
         parser = optparse.OptionParser(usage=usage)
         parser.add_option('--config', dest='cfgfn', type=str, metavar="FILE",
                           help="Use configuration file FILE. Default is /etc/weewx/weewx.conf or /home/weewx/weewx.conf")

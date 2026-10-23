@@ -115,3 +115,73 @@ def test_service_keeps_existing_database_values(collector, tmp_path, monkeypatch
         assert manager.getRecord(1000000300)['mem_total'] == 10000000000
     finally:
         binder.close()
+
+
+def test_apcups_output_is_parsed_as_text(monkeypatch):
+    import subprocess
+    output = 'printf "LOADPCT  :  12.0 Percent\\nTIMELEFT :  47.0 Minutes\\n"'
+    monkeypatch.setattr(cmon, 'Popen', lambda cmd, **kw: subprocess.Popen(output, **kw))
+    assert cmon.Collector._get_apcups_info() == {'ups_load': 12.0, 'ups_time': 47.0}
+
+
+def test_rpi_output_is_parsed_as_text(tmp_path, monkeypatch):
+    vcgencmd = tmp_path / 'vcgencmd'
+    vcgencmd.write_text('#!/bin/sh\necho "temp=42.8\'C"\n')
+    vcgencmd.chmod(0o755)
+    monkeypatch.setattr(cmon.Collector, '_RPI_VCGENCMD', str(vcgencmd))
+    assert cmon.Collector._get_rpi_info()['core_temp'] == 42.8
+
+
+def test_single_ignored_mount_is_a_list(collector, tmp_path):
+    sensor, proc, sys = collector
+    (proc / 'mounts').write_text('proc /proc proc rw 0 0\n/dev/sda1 %s ext4 rw 0 0\n' % tmp_path)
+    driver = cmon.ComputerMonitorDriver(ignored_mounts='/proc')
+    record = driver.collector.get_data(100)
+    assert 'disk' + str(tmp_path).replace('/', '_') + '_total' in record
+    assert 'disk_proc_total' not in record
+
+
+def test_device_mounted_twice_records_both_mount_points(collector, tmp_path):
+    sensor, proc, sys = collector
+    first, second = tmp_path / 'first', tmp_path / 'second'
+    first.mkdir()
+    second.mkdir()
+    (proc / 'mounts').write_text('/dev/sda1 %s ext4 rw 0 0\n/dev/sda1 %s ext4 rw 0 0\n' % (first, second))
+    record = sensor.get_data(100)
+    assert 'disk' + str(first).replace('/', '_') + '_total' in record
+    assert 'disk' + str(second).replace('/', '_') + '_total' in record
+
+
+def test_unsupported_system_is_reported(monkeypatch):
+    monkeypatch.setattr(cmon.platform, 'system', lambda: 'BSD')
+    with pytest.raises(Exception, match='unsupported system BSD'):
+        cmon.get_collector()
+
+
+def test_macos_memory_is_in_kb(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    memory = SimpleNamespace(total=2048, free=1024, used=1024, available=1024,
+                             active=1024, inactive=0, wired=0)
+    swap = SimpleNamespace(total=4096, free=4096, used=0, sin=0, sout=0)
+    psutil = SimpleNamespace(virtual_memory=lambda: memory, swap_memory=lambda: swap,
+                             cpu_count=lambda: 1, cpu_times=lambda: SimpleNamespace(),
+                             net_io_counters=lambda pernic: {}, disk_partitions=lambda: [])
+    monkeypatch.setitem(sys.modules, 'psutil', psutil)
+    record = cmon.MacOSXCollector([], []).get_data(100)
+    assert (record['mem_total'], record['mem_free'], record['swap_total']) == (2, 1, 4)
+
+
+def test_main_runs_without_options():
+    import subprocess
+    import sys
+    path = Path(__file__).parents[1] / 'bin/user/cmon.py'
+    result = subprocess.run([sys.executable, str(path)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_skin_has_no_hard_coded_version():
+    import configobj
+    skin = Path(__file__).parents[1] / 'skins/cmon'
+    assert 'version' not in configobj.ConfigObj(str(skin / 'skin.conf'))['Extras']
+    assert '$Extras.version' not in (skin / 'index.html.tmpl').read_text()

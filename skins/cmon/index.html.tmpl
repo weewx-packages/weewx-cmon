@@ -1,4 +1,5 @@
 ## cmon for weewx - Copyright 2013-2014 Matthew Wall
+## Modified 2026-10-23: remove the version line from the controls.
 ## $Id: index.html.tmpl 1374 2015-10-23 12:15:01Z mwall $
 #errorCatcher Echo
 #encoding UTF-8
@@ -161,11 +162,7 @@ body {
 
   <body onload='setup(); populate_graphs();'>
     <div id='controls'>
-      <p>Station Health<br/>
-        <small>
-          Version: $Extras.version
-        </small>
-      </p>
+      <p>Station Health</p>
       <form>
         <table>
           <tr><td style='text-align:right'>Metrics:</td>

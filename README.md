@@ -70,7 +70,7 @@ Options in `[ComputerMonitor]`:
 | `data_binding` | `cmon_binding` | Binding of the database cmon writes to. |
 | `max_age` | `2592000` | Records older than this many seconds are deleted. `None` keeps all records. |
 | `ignored_mounts` | `/lib/init/rw, /proc, /sys, /dev, /afs, /mit, /run, /var/lib/nfs` | Mount points starting with one of these paths are skipped. Setting the option replaces the whole list. Network mounts with `:` in the device name are always skipped. |
-| `hardware` | none | `apcups` reads a UPS through `/sbin/apcaccess`, `rpi` reads `/opt/vc/bin/vcgencmd`. See Limitations. |
+| `hardware` | none | `apcups` reads a UPS through `/sbin/apcaccess`, `rpi` reads `/opt/vc/bin/vcgencmd`. If the command is missing or fails, its readings are left out. |
 
 ### Stored values
 
@@ -80,14 +80,14 @@ columns in the schema are saved.
 
 | Columns | Unit |
 | --- | --- |
-| `mem_total`, `mem_free`, `mem_used`, `swap_total`, `swap_free`, `swap_used` | kB on Linux |
+| `mem_total`, `mem_free`, `mem_used`, `swap_total`, `swap_free`, `swap_used` | kB |
 | `cpu_user`, `cpu_nice`, `cpu_system`, `cpu_idle`, `cpu_iowait`, `cpu_irq`, `cpu_softirq` | CPU time ticks since the previous sample |
 | `load1`, `load5`, `load15` | load average |
 | `proc_active`, `proc_total` | number of processes |
 | `cpu_temp`, `cpu_temp1` to `cpu_temp4` | °C |
 | `net_eth0_*`, `net_wlan0_*` with `rbytes`, `rpackets`, `rerrs`, `rdrop`, `tbytes`, `tpackets`, `terrs`, `tdrop` | difference since the previous sample |
 | `disk_root_*`, `disk_home_*` with `total`, `free`, `used` | kB |
-| `ups_temp`, `ups_load`, `ups_charge`, `ups_voltage`, `ups_time` | numbers from `apcaccess`, see Limitations |
+| `ups_temp`, `ups_load`, `ups_charge`, `ups_voltage`, `ups_time` | °C, percent, percent, volt, minutes, as `apcaccess` prints them |
 
 `cpu_temp` comes from `/sys/class/thermal/thermal_zone0/temp`. `cpu_tempN`
 comes from the `tempN_input` files under `/sys/class/hwmon/hwmon*`. Disk
@@ -149,17 +149,7 @@ schema are stored.
 
 ## Limitations
 
-- `hardware = apcups` and `hardware = rpi` raise `TypeError` on Python 3,
-  because the command output is read as bytes. The error is not caught, so
-  WeeWX stops at the first sample.
-- A single value for `ignored_mounts`, such as `ignored_mounts = /proc`, is
-  read as a string, not a list. Every mount is then skipped. Use at least two
-  comma-separated paths.
-- Mounts are read per device from `/proc/mounts`. When one device is mounted
-  at several places, for example with bind mounts, only its last mount point
-  is recorded. `disk_root` can be missing for that reason.
-- On macOS, memory and swap values are in bytes, not kB. Load and
-  temperature are not collected there.
+- On macOS, load and temperature are not collected.
 - Other systems, including the BSDs, are not supported. The service then
   stops WeeWX at startup.
 - The tests use fixture files. Readings on a real host depend on its kernel
