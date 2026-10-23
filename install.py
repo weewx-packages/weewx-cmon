@@ -11,7 +11,7 @@ def loader():
 class ComputerMonitorInstaller(ExtensionInstaller):
     def __init__(self):
         super(ComputerMonitorInstaller, self).__init__(
-            version="0.21.0",
+            version="0.21.1",
             name='cmon',
             description='Collect and display computer health indicators.',
             author="Matthew Wall",
